@@ -1,0 +1,845 @@
+%{
+// Register declration enumeration here
+enum {FP=0, BP=1, RV=2, TR=3, R4=4, R5=5, R6=6, R7=7,
+      R8=8, R9=9, R10=10, R11=11, R12=12, R13=13, R14=14, R15=15};
+enum {FRV=0, F1=1, F2=2, F3=3, F4=4, F5=5, F6=6, F7=7,
+      F8=8, F9=9, F10=10, F11=11, F12=12, F13=13, F14=14, F15=15};
+
+#include "c.h"
+
+#define NODEPTR_TYPE Node
+#define OP_LABEL(p) ((p)->op)
+#define LEFT_CHILD(p) ((p)->kids[0])
+#define RIGHT_CHILD(p) ((p)->kids[1])
+#define STATE_LABEL(p) ((p)->x.state)
+
+// Declare local routines to be used by IR record here
+static void address(Symbol, Symbol, long);
+static void blkfetch(int, int, int, int);
+static void blkloop(int, int, int, int, int, int[]);
+static void blkstore(int, int, int, int);
+static void defaddress(Symbol);
+static void defconst(int, int, Value);
+static void defstring(int, char *);
+static void defsymbol(Symbol);
+static void doarg(Node);
+static void emit2(Node);
+static void export(Symbol);
+static void clobber(Node);
+static void function(Symbol, Symbol [], Symbol [], int);
+static void global(Symbol);
+static void import(Symbol);
+static void local(Symbol);
+static void progbeg(int, char **);
+static void progend(void);
+static void segment(int);
+static void space(int);
+static void target(Node);
+static int memop(Node);
+static int sametree(Node,Node);
+static int isfptr(Node,int,int);
+
+// Local vars here
+
+static Symbol intreg[32];
+static Symbol fltreg[32];
+
+static Symbol intwldcrd;
+static Symbol fltwldcrd;
+
+static int current_seg;
+
+%}
+%start stmt
+%term CNSTF1=1041
+%term CNSTI1=1045
+%term CNSTP1=1047
+%term CNSTU1=1046
+%term ARGB=41
+%term ARGF1=1057
+%term ARGI1=1061
+%term ARGP1=1063
+%term ARGU1=1062
+%term ASGNB=57
+%term ASGNF1=1073
+%term ASGNI1=1077
+%term ASGNP1=1079
+%term ASGNU1=1078
+%term INDIRB=73
+%term INDIRF1=1089
+%term INDIRI1=1093
+%term INDIRP1=1095
+%term INDIRU1=1094
+%term CVFF1=1137
+%term CVFI1=1141
+%term CVIF1=1153
+%term CVII1=1157
+%term CVIU1=1158
+%term CVPU1=1174
+%term CVUI1=1205
+%term CVUP1=1207
+%term CVUU1=1206
+%term NEGF1=1217
+%term NEGI1=1221
+%term CALLB=217
+%term CALLF1=1233
+%term CALLI1=1237
+%term CALLP1=1239
+%term CALLU1=1238
+%term CALLV=216
+%term RETF1=1265
+%term RETI1=1269
+%term RETP1=1271
+%term RETU1=1270
+%term RETV=248
+%term ADDRGP1=1287
+%term ADDRFP1=1303
+%term ADDRLP1=1319
+%term ADDF1=1329
+%term ADDI1=1333
+%term ADDP1=1335
+%term ADDU1=1334
+%term SUBF1=1345
+%term SUBI1=1349
+%term SUBP1=1351
+%term SUBU1=1350
+%term LSHI1=1365
+%term LSHU1=1366
+%term MODI1=1381
+%term MODU1=1382
+%term RSHI1=1397
+%term RSHU1=1398
+%term BANDI1=1413
+%term BANDU1=1414
+%term BCOMI1=1429
+%term BCOMU1=1430
+%term BORI1=1445
+%term BORU1=1446
+%term BXORI1=1461
+%term BXORU1=1462
+%term DIVF1=1473
+%term DIVI1=1477
+%term DIVU1=1478
+%term MULF1=1489
+%term MULI1=1493
+%term MULU1=1494
+%term EQF1=1505
+%term EQI1=1509
+%term EQU1=1510
+%term GEF1=1521
+%term GEI1=1525
+%term GEU1=1526
+%term GTF1=1537
+%term GTI1=1541
+%term GTU1=1542
+%term LEF1=1553
+%term LEI1=1557
+%term LEU1=1558
+%term LTF1=1569
+%term LTI1=1573
+%term LTU1=1574
+%term NEF1=1585
+%term NEI1=1589
+%term NEU1=1590
+%term JUMPV=584
+%term LABELV=600
+%term VREGP=711
+
+%term LOADB=233
+%term LOADF1=1249
+%term LOADP1=1255
+%term LOADI1=1253
+%term LOADU1=1254
+%%
+
+reg:	LOADI1(reg)	"\tLDA\t(%0)\n\tSTA\t(%c)\n" move(a)
+reg:	LOADU1(reg)	"\tLDA\t(%0)\n\tSTA\t(%c)\n" move(a)
+reg:	LOADP1(reg)	"\tLDA\t(%0)\n\tSTA\t(%c)\n" move(a)
+reg:	LOADF1(reg)	"\tLDA\t(%0)\n\tSTA\t(%c)\n" move(a)
+
+reg:	INDIRI1(VREGP)     "# read register\n"
+reg:	INDIRU1(VREGP)     "# read register\n"
+reg:	INDIRP1(VREGP)     "# read register\n"
+reg:	INDIRF1(VREGP)     "# read register\n"
+
+stmt:	ASGNI1(VREGP,reg)  "# write register\n"
+stmt:	ASGNU1(VREGP,reg)  "# write register\n"
+stmt:	ASGNP1(VREGP,reg)  "# write register\n"
+stmt:	ASGNF1(VREGP,reg)  "# write register\n"
+
+reg: CVIF1(reg)	"\tCSR\tCVTIF\t%c,%0\n" 4
+reg: CVFI1(reg)	"\tCSR\tCVTFI\t%c,%0\n" 4
+reg: CVUP1(reg)	"\tLDA\t%0\n\tSTA\t(%c)\n" move(a)
+reg: CVPU1(reg)	"\tLDA\t%0\n\tSTA\t(%c)\n" move(a)
+reg: CVIU1(reg)	"\tLDA\t%0\n\tSTA\t(%c)\n" move(a)
+reg: CVUI1(reg)	"\tLDA\t%0\n\tSTA\t(%c)\n" move(a)
+
+reg: con "\tLDA\t%0\n\tSTA\t(%c)\n" 2
+
+c0: CNSTI1  "0"	range(a,0,0)
+c1: CNSTI1  "1"	range(a,1,1)
+c2: CNSTI1  "2"	range(a,2,2)
+cn1: CNSTI1  "-1" range(a,0xffff,0xffff)
+cn1: CNSTI1  "-1" range(a,-1,-1)
+
+con1: CNSTI1  "%a"
+con1: CNSTU1  "%a"
+con1: CNSTP1  "%a"
+
+con:	con1	"%0"
+con:	c0	"%0"
+con:	c1	"%0"
+con:	c2	"%0"
+con:	cn1	"%0"
+
+reg:	ADDI1(reg,reg)	"\tLDA\t(%0)\n\tADD\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	ADDI1(reg,con)	"\tLDA\t(%0)\n\tADD\t%1\n\tSTA\t(%c)\n" 4
+reg:	ADDI1(reg,c1)	"\tLDA\t(%0)\n\tINC\n\tSTA\t(%c)\n" 3
+stmt:	ASGNI1(maddr,ADDI1(INDIRI1(maddr),con)) "\tLDA\t(%1)\n\tADD\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,ADDI1(INDIRI1(maddr),c1)) "\tLDA\t(%1)\n\tINC\n\tSTA\t(%0)\n" 1
+stmt:	ASGNI1(maddr,ADDI1(INDIRI1(maddr),INDIRI1(maddr))) "\tLDA\t(%1)\n\tADD\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,ADDI1(INDIRI1(maddr),reg)) "\tLDA\t(%1)\n\tADD\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	ADDU1(reg,reg)	"\tLDA\t(%0)\n\tADD\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	ADDU1(reg,con)	"\tLDA\t(%0)\n\tADD\t%1\n\tSTA\t(%c)\n" 4
+reg:	ADDU1(reg,c1)	"\tLDA\t(%0)\n\tINC\n\tSTA\t(%c)\n" 3
+stmt:	ASGNU1(maddr,ADDU1(INDIRU1(maddr),con)) "\tLDA\t(%1)\n\tADD\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,ADDU1(INDIRU1(maddr),c1)) "\tLDA\t(%1)\n\tINC\n\tSTA\t(%0)\n" 1
+stmt:	ASGNU1(maddr,ADDU1(INDIRU1(maddr),INDIRU1(maddr))) "\tLDA\t(%1)\n\tADD\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,ADDU1(INDIRU1(maddr),reg)) "\tLDA\t(%1)\n\tADD\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	ADDP1(reg,reg)	"\tLDA\t(%0)\n\tADD\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	ADDP1(reg,con)	"\tLDA\t(%0)\n\tADD\t%1\n\tSTA\t(%c)\n" 4
+reg:	ADDP1(reg,c1)	"\tLDA\t(%0)\n\tINC\n\tSTA\t(%c)\n" 3
+stmt:	ASGNP1(maddr,ADDP1(INDIRP1(maddr),con)) "\tLDA\t(%1)\n\tADD\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNP1(maddr,ADDP1(INDIRP1(maddr),c1)) "\tLDA\t(%1)\n\tINC\n\tSTA\t(%0)\n" 1
+stmt:	ASGNP1(maddr,ADDP1(INDIRP1(maddr),INDIRP1(maddr))) "\tLDA\t(%1)\n\tADD\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNP1(maddr,ADDP1(INDIRP1(maddr),reg)) "\tLDA\t(%1)\n\tADD\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	ADDF1(reg,reg)	"\tADDF\t%c,%0,%1\n" 6
+
+reg:	SUBI1(reg,reg)	"\tLDA\t(%0)\n\tSUB\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	SUBI1(reg,con)	"\tLDA\t(%0)\n\tSUB\t%1\n\tSTA\t(%c)\n" 4
+reg:	SUBI1(reg,c1)	"\tLDA\t(%0)\n\tDEC\n\tSTA\t(%c)\n" 3
+stmt:	ASGNI1(maddr,SUBI1(INDIRI1(maddr),con)) "\tLDA\t(%1)\n\tSUB\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,SUBI1(INDIRI1(maddr),c1)) "\tLDA\t(%1)\n\tDEC\n\tSTA\t(%0)\n" 1
+stmt:	ASGNI1(maddr,SUBI1(INDIRI1(maddr),INDIRI1(maddr))) "\tLDA\t(%1)\n\tSUB\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,SUBI1(INDIRI1(maddr),reg)) "\tLDA\t(%1)\n\tSUB\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	SUBU1(reg,reg)	"\tLDA\t(%0)\n\tSUB\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	SUBU1(reg,con)	"\tLDA\t(%0)\n\tSUB\t%1\n\tSTA\t(%c)\n" 4
+reg:	SUBU1(reg,c1)	"\tLDA\t(%0)\n\tDEC\n\tSTA\t(%c)\n" 3
+stmt:	ASGNU1(maddr,SUBU1(INDIRU1(maddr),con)) "\tLDA\t(%1)\n\tSUB\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,SUBU1(INDIRU1(maddr),c1)) "\tLDA\t(%1)\n\tDEC\n\tSTA\t(%0)\n" 1
+stmt:	ASGNU1(maddr,SUBU1(INDIRU1(maddr),INDIRU1(maddr))) "\tLDA\t(%1)\n\tSUB\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,SUBU1(INDIRU1(maddr),reg)) "\tLDA\t(%1)\n\tSUB\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	SUBP1(reg,reg)	"\tLDA\t(%0)\n\tSUB\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	SUBP1(reg,con)	"\tLDA\t(%0)\n\tSUB\t%1\n\tSTA\t(%c)\n" 4
+reg:	SUBP1(reg,c1)	"\tLDA\t(%0)\n\tDEC\n\tSTA\t(%c)\n" 3
+stmt:	ASGNP1(maddr,SUBP1(INDIRP1(maddr),con)) "\tLDA\t(%1)\n\tSUB\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNP1(maddr,SUBP1(INDIRP1(maddr),c1)) "\tLDA\t(%1)\n\tDEC\n\tSTA\t(%0)\n" 1
+stmt:	ASGNP1(maddr,SUBP1(INDIRP1(maddr),INDIRP1(maddr))) "\tLDA\t(%1)\n\tSUB\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNP1(maddr,SUBP1(INDIRP1(maddr),reg)) "\tLDA\t(%1)\n\tSUB\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	SUBF1(reg,reg)	"\tSUBF\t%c,%0,%1\n" 6
+
+reg:	BANDI1(reg,reg)	"\tLDA\t(%0)\n\tAND\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	BANDI1(reg,con)	"\tLDA\t(%0)\n\tAND\t%1\n\tSTA\t(%c)\n" 4
+stmt:	ASGNI1(maddr,BANDI1(INDIRI1(maddr),con)) "\tLDA\t(%1)\n\tAND\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,BANDI1(INDIRI1(maddr),INDIRI1(maddr))) "\tLDA\t(%1)\n\tAND\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,BANDI1(INDIRI1(maddr),reg)) "\tLDA\t(%1)\n\tAND\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	BANDU1(reg,reg)	"\tLDA\t(%0)\n\tAND\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	BANDU1(reg,con)	"\tLDA\t(%0)\n\tAND\t%1\n\tSTA\t(%c)\n" 4
+stmt:	ASGNU1(maddr,BANDU1(INDIRU1(maddr),con)) "\tLDA\t(%1)\n\tAND\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,BANDU1(INDIRU1(maddr),INDIRU1(maddr))) "\tLDA\t(%1)\n\tAND\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,BANDU1(INDIRU1(maddr),reg)) "\tLDA\t(%1)\n\tAND\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	NEGI1(reg)	"\tCLR\n\tSUB\t(%0)\n\tSTA\t(%c)\n" 3
+reg:	NEGF1(reg)	"\tNEGF\t%c\t%0\n" 6
+
+reg:	LSHI1(reg)	"\tLSH\t%c\t%0\n" 6
+reg:	LSHI1(c1)	"\tLDA\t(%0)\n\tSHL\n\tSTA\t(%c)\n" 3
+reg:	LSHI1(c2)	"\tLDA\t(%0)\n\tSHL\nSHL\n\tSTA\t(%c)\n" 4
+reg:	RSHI1(reg)	"\tRSH\t%c\t%0\n" 6
+reg:	RSHI1(c1)	"\tLDA\t(%0)\n\tLSR\n\tSTA\t(%c)\n" 3
+reg:	RSHI1(c2)	"\tLDA\t(%0)\n\tLSR\nSHL\n\tSTA\t(%c)\n" 4
+reg:	LSHU1(reg)	"\tLSH\t%c\t%0\n" 6
+reg:	LSHU1(c1)	"\tLDA\t(%0)\n\tSHL\n\tSTA\t(%c)\n" 3
+reg:	LSHU1(c2)	"\tLDA\t(%0)\n\tSHL\nSHL\n\tSTA\t(%c)\n" 4
+reg:	RSHU1(reg)	"\tRSH\t%c\t%0\n" 6
+reg:	RSHU1(c1)	"\tLDA\t(%0)\n\tLSR\n\tSTA\t(%c)\n" 3
+reg:	RSHU1(c2)	"\tLDA\t(%0)\n\tLSR\nSHL\n\tSTA\t(%c)\n" 4
+
+reg:	BCOMI1(reg)	"\tLDA\t(%0)\n\tCOM\n\tSTA\t(%c)\n" 3
+reg:	BCOMU1(reg)	"\tLDA\t(%0)\n\tCOM\n\tSTA\t(%c)\n" 3
+
+reg:	BORI1(reg,reg)	"\tLDA\t(%0)\n\tORA\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	BORI1(reg,con)	"\tLDA\t(%0)\n\tORA\t%1\n\tSTA\t(%c)\n" 4
+stmt:	ASGNI1(maddr,BORI1(INDIRI1(maddr),con)) "\tLDA\t(%1)\n\tORA\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,BORI1(INDIRI1(maddr),INDIRI1(maddr))) "\tLDA\t(%1)\n\tORA\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,BORI1(INDIRI1(maddr),reg)) "\tLDA\t(%1)\n\tORA\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	BORU1(reg,reg)	"\tLDA\t(%0)\n\tORA\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	BORU1(reg,con)	"\tLDA\t(%0)\n\tORA\t%1\n\tSTA\t(%c)\n" 4
+stmt:	ASGNU1(maddr,BORU1(INDIRU1(maddr),con)) "\tLDA\t(%1)\n\tORA\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,BORU1(INDIRU1(maddr),INDIRU1(maddr))) "\tLDA\t(%1)\n\tORA\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,BORU1(INDIRU1(maddr),reg)) "\tLDA\t(%1)\n\tORA\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	BXORI1(reg,reg)	"\tLDA\t(%0)\n\tXOR\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	BXORI1(reg,con)	"\tLDA\t(%0)\n\tXOR\t%1\n\tSTA\t(%c)\n" 4
+stmt:	ASGNI1(maddr,BXORI1(INDIRI1(maddr),con)) "\tLDA\t(%1)\n\tXOR\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,BXORI1(INDIRI1(maddr),INDIRI1(maddr))) "\tLDA\t(%1)\n\tXOR\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNI1(maddr,BXORI1(INDIRI1(maddr),reg)) "\tLDA\t(%1)\n\tXOR\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	BXORU1(reg,reg)	"\tLDA\t(%0)\n\tXOR\t(%1)\n\tSTA\t(%c)\n" 4
+reg:	BXORU1(reg,con)	"\tLDA\t(%0)\n\tXOR\t%1\n\tSTA\t(%c)\n" 4
+stmt:	ASGNU1(maddr,BXORU1(INDIRU1(maddr),con)) "\tLDA\t(%1)\n\tXOR\t%2\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,BXORU1(INDIRU1(maddr),INDIRU1(maddr))) "\tLDA\t(%1)\n\tXOR\t(%2)\n\tSTA\t(%0)\n" 2
+stmt:	ASGNU1(maddr,BXORU1(INDIRU1(maddr),reg)) "\tLDA\t(%1)\n\tXOR\t(%2)\n\tSTA\t(%0)\n" 2
+
+reg:	MULI1(reg,reg)	"\tMULI\t%c\t%0,%1\n" 6
+reg:	MULU1(reg,reg)	"\tMULU\t%c\t%0,%1\n" 6
+reg:	MULF1(reg,reg)	"\tMULF\t%c\t%0,%1\n" 6
+
+reg:	DIVI1(reg,reg)	"\tDIVI\t%c\t%0,%1\n" 6
+reg:	DIVU1(reg,reg)	"\tDIVU\t%c\t%0,%1\n" 6
+reg:	DIVF1(reg,reg)	"\tDIVF\t%c\t%0,%1\n" 6
+
+reg:	MODI1(reg,reg)	"\tMODI\t%c\t%0,%1\n" 6
+reg:	MODU1(reg,reg)	"\tMODU\t%c\t%0,%1\n" 6
+
+stmt:	EQI1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tJOZ\t%a\n" 3
+stmt:	EQI1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tJOZ\t%a\n" 3
+
+stmt:	EQU1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tJOZ\t%a\n" 3
+stmt:	EQU1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tJOZ\t%a\n" 3
+
+stmt:	NEI1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tJNZ\t%a\n" 3
+stmt:	NEI1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tJNZ\t%a\n" 3
+
+stmt:	NEU1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tJNZ\t%a\n" 3
+stmt:	NEU1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tJNZ\t%a\n" 3
+
+stmt:	LTI1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tBLT\t%a\n" 3
+stmt:	LTI1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tBLT\t%a\n" 3
+
+stmt:	LTU1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tJNC\t%a\n" 3
+stmt:	LTU1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tJNC\t%a\n" 3
+
+stmt:	LEI1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tBLE\t%a\n" 3
+stmt:	LEI1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tBLE\t%a\n" 3
+
+stmt:	LEU1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tJNC\t%a\n\tJOZ\t%a\n" 3
+stmt:	LEU1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tJNC\t%a\n\tJOZ\t%a\n" 3
+
+stmt:	GTI1(reg,reg)		"\tLDA\t(%1)\n\tSUB\t(%0)\n\tBLE\t%a\n" 3
+
+stmt:	GTU1(reg,reg)		"\tLDA\t(%1)\n\tSUB\t(%0)\n\tJNC\t%a\n\tJOZ\t%a\n" 3
+
+stmt:	GEI1(reg,reg)		"\tLDA\t(%1)\n\tSUB\t(%0)\n\tBLT\t%a\n" 3
+
+stmt:	GEU1(reg,reg)		"\tLDA\t(%0)\n\tSUB\t(%1)\n\tJOC\t%a\n" 3
+stmt:	GEU1(reg,con)		"\tLDA\t(%0)\n\tSUB\t%1\n\tJOC\t%a\n" 3
+
+stmt:	EQF1(reg,reg)	"\tEQF\t%0,%1,%a\n" 5
+stmt:	NEF1(reg,reg)	"\tNEF\t%0,%1,%a\n" 5
+stmt:	LTF1(reg,reg)	"\tLTF\t%0,%1,%a\n" 5
+stmt:	LEF1(reg,reg)	"\tLEF\t%0,%1,%a\n" 5
+stmt:	GTF1(reg,reg)	"\tGTF\t%0,%1,%a\n" 5
+stmt:	GEF1(reg,reg)	"\tGEF\t%0,%1,%a\n" 5
+
+stmt:	reg  ""
+stmt:	LABELV	"%a:\n"
+reg:	ADDRGP1	"\tLDA\t%a\n\tSTA\t(%c)\n" 2
+reg:	ADDRLP1	"\tLDA\t(FP)\n\tADD\t%a+%F\n\tSTA\t(%c)\n" 3
+reg:	ADDRFP1	"\tLDA\t(FP)\n\tADD\t%a+2+%F\n\tSTA\t(%c)\n" 3
+
+reg:	INDIRU1(reg)	"\tLDA\t[%0]\n\tSTA\t(%c)\n" 2
+reg:	INDIRI1(reg)	"\tLDA\t[%0]\n\tSTA\t(%c)\n" 2
+reg:	INDIRP1(reg)	"\tLDA\t[%0]\n\tSTA\t(%c)\n" 2
+reg:	INDIRF1(reg)	"\tLDA\t[%0]\n\tSTA\t(%c)\n" 2
+
+maddr:	ADDRGP1	"%a"
+
+reg:	CALLI1(maddr)	"\tCSR\t%0\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLU1(maddr)	"\tCSR\t%0\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLP1(maddr)	"\tCSR\t%0\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLF1(maddr)	"\tCSR\t%0\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLV(maddr)	"\tCSR\t%0\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLB(maddr)	"\tCSR\t%0\n\tSTS\t(FP)	; restore FP\n"	1
+
+reg:	CALLI1(reg)	"\tCSR\t(%0)\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLU1(reg)	"\tCSR\t(%0)\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLP1(reg)	"\tCSR\t(%0)\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLF1(reg)	"\tCSR\t(%0)\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLV(reg)	"\tCSR\t(%0)\n\tSTS\t(FP)	; restore FP\n"	1
+reg:	CALLB(reg)	"\tCSR\t(%0)\n\tSTS\t(FP)	; restore FP\n"	1
+
+stmt:	RETI1(reg)	"# rtarget will have handled this\n" 1
+stmt:	RETI1(con)	"\tLDA\t%0\n\tSTA\t(RV)\n" 1
+stmt:	RETU1(reg)	"# rtarget will have handled this\n" 1
+stmt:	RETU1(con)	"\tLDA\t%0\n\tSTA\t(RV)\n" 1
+stmt:	RETP1(reg)	"# rtarget will have handled this\n" 1
+stmt:	RETF1(reg)	"# rtarget will have handled this\n" 1
+stmt:	RETV(reg)	"# ret\n" 1
+
+stmt:	ARGP1(reg)	"# Let emit2 handle args\n" 1
+stmt:	ARGI1(reg)	"# Let emit2 handle args\n" 1
+stmt:	ARGU1(reg)	"# Let emit2 handle args\n" 1
+stmt:	ARGF1(reg)	"# Let emit2 handle args\n" 1
+
+
+stmt:	JUMPV(maddr)	"\tJMP\t%0\n"	1
+stmt:	JUMPV(reg)	"\tJMP\t(%0)\n"	1
+
+stmt:	ASGNI1(reg,reg)		"\tLDA\t(%1)\n\tSTA\t[%0]\n"	2
+stmt:	ASGNI1(reg,c0)		"\tCLR\n\tSTA\t[%0]\n"	2
+stmt:	ASGNI1(reg,cn1)		"\tSET\n\tSTA\t[%0]\n"	2
+stmt:	ASGNI1(reg,con)		"\tLDA\t%1\n\tSTA\t[%0]\n"	2
+stmt:	ASGNI1(maddr,con)	"\tLDA\t%1\n\tSTA\t(%0)\n"	1
+stmt:	ASGNI1(maddr,c0)	"\tCLR\n\tSTA\t(%0)\n"	1
+stmt:	ASGNI1(maddr,cn1)	"\tSET\n\tSTA\t(%0)\n"	1
+stmt:	ASGNI1(maddr,reg)	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+stmt:	ASGNI1(maddr,INDIRI1(maddr))	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+
+stmt:	ASGNU1(reg,reg)		"\tLDA\t(%1)\n\tSTA\t[%0]\n"	2
+stmt:	ASGNU1(reg,c0)		"\tCLR\n\tSTA\t[%0]\n"	2
+stmt:	ASGNU1(reg,cn1)		"\tSET\n\tSTA\t[%0]\n"	2
+stmt:	ASGNU1(reg,con)		"\tLDA\t%1\n\tSTA\t[%0]\n"	2
+stmt:	ASGNU1(maddr,con)	"\tLDA\t%1\n\tSTA\t(%0)\n"	1
+stmt:	ASGNU1(maddr,c0)	"\tCLR\n\tSTA\t(%0)\n"	1
+stmt:	ASGNU1(maddr,cn1)	"\tSET\n\tSTA\t(%0)\n"	1
+stmt:	ASGNU1(maddr,reg)	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+stmt:	ASGNU1(maddr,INDIRU1(maddr))	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+
+stmt:	ASGNP1(reg,reg)		"\tLDA\t(%1)\n\tSTA\t[%0]\n"	2
+stmt:	ASGNP1(reg,c0)		"\tCLR\n\tSTA\t[%0]\n"	2
+stmt:	ASGNP1(reg,cn1)		"\tSET\n\tSTA\t[%0]\n"	2
+stmt:	ASGNP1(reg,con)		"\tLDA\t%1\n\tSTA\t[%0]\n"	2
+stmt:	ASGNP1(maddr,reg)	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+stmt:	ASGNP1(maddr,con)	"\tLDA\t%1\n\tSTA\t(%0)\n"	1
+stmt:	ASGNP1(maddr,c0)	"\tCLR\n\tSTA\t(%0)\n"	1
+stmt:	ASGNP1(maddr,cn1)	"\tSET\n\tSTA\t(%0)\n"	1
+stmt:	ASGNP1(maddr,INDIRU1(maddr))	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+
+stmt:	ASGNF1(reg,reg)		"\tLDA\t(%1)\n\tSTA\t[%0]\n"	2
+stmt:	ASGNF1(maddr,reg)	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+stmt:	ASGNU1(maddr,INDIRU1(maddr))	"\tLDA\t(%1)\n\tSTA\t(%0)\n"	1
+
+stmt:	ASGNB(reg,INDIRB(reg))	"\tMEMCOPY\t%0,%1,%a\n"
+stmt:	ARGB(INDIRB(reg))	"# let emit2 handle %0\n"
+
+%%
+
+// Emitters
+static void progbeg(int argc, char *argv[]) {
+    int i;
+    char buf[10];
+    {
+	union {
+	    char c;
+	    int i;
+	} u;
+	u.i = 0;
+	u.c = 1;
+	swap = ((int)(u.i == 1)) != IR->little_endian;
+    }
+    parseflags(argc,argv);
+
+    // Reg symbols
+    intreg[FP] = mkreg("FP",FP,1,IREG);
+    intreg[BP] = mkreg("BP",BP,1,IREG);
+    intreg[RV] = mkreg("RV",RV,1,IREG);
+    intreg[TR] = mkreg("TR",TR,1,IREG);
+    for (i=R4; i<=R15; i++) {
+        sprintf(buf,"R%d",i);
+        intreg[i] = mkreg(buf,i,1,IREG);
+    }
+
+    fltreg[FRV] = mkreg("FRV",FRV,1,FREG);
+    for (i=1; i<=F15; i++) {
+        sprintf(buf,"F%d",i);
+        fltreg[i] = mkreg(buf,i,1,FREG);
+    }
+
+    // Set up sets
+    intwldcrd = mkwildcard(intreg);
+    fltwldcrd = mkwildcard(fltreg);
+
+    // Set up regs
+    // Pretend to have a lot of registers.  Possible performance enhancement is to
+    // allow some of these to be used for register variable promotion - but beware of
+    // spilling costs (and needed code changes in function(..)
+    tmask[IREG] = (1<<R4) | (1<<R5) | (1<<R6) | (1<<R7) |
+                  (1<<R8) | (1<<R9) | (1<<R10) | (1<<R11) | 
+		  (1<<R12) | (1<<R13) | (1<<R14) | (1<<R15);
+    vmask[IREG] = 0;
+
+    tmask[FREG] = (1<<F1) | (1<<F2) | (1<<F3) | 
+                  (1<<F4) | (1<<F5) | (1<<F6) | (1<<F7) |
+                  (1<<F8) | (1<<F9) | (1<<F10) | (1<<F11) |
+                  (1<<F12) | (1<<F13) | (1<<F14) | (1<<F15);
+    vmask[FREG] = 0;
+    
+    print(";	D16/M assembly file, generated by lcc 4.2\n");
+    print(";\n");
+    print("\tINCL\t\"d16m.h\"\t; Macros and runtime support include file\n");
+    print(";\n");
+    print("\tORG\trom\n");
+    current_seg = CODE;
+}
+
+static Symbol rmap(int opk) {
+    switch (optype(opk)) {
+	case B:
+	case P:
+	case I:
+	case U:
+	    return intwldcrd;
+	case F:
+	    return fltwldcrd;
+	default:
+	    return 0;
+    }
+}
+
+static void segment(int n) {
+    int src_is_rom;
+    int tgt_is_rom;
+
+    src_is_rom = ((current_seg == CODE) || (current_seg == LIT));
+    tgt_is_rom = ((n == CODE) || (n == LIT));
+    
+    current_seg = n;
+
+    if (src_is_rom==tgt_is_rom) {
+	return;
+    }
+
+    if (src_is_rom) {
+        print("rom:\tSETL\t$\n");
+	print("\tORG\tram\n");
+    } else {
+        print("ram:\tSETL\t$\n");
+	print("\tORG\trom\n");
+    }
+}
+
+static void progend(void) {
+    print("\tEND\n");
+}
+
+static void target(Node p) {
+    assert(p);
+    switch (specific(p->op)) {
+        case CALL+I:
+        case CALL+U:
+        case CALL+P:
+	   setreg(p,intreg[RV]);
+	   break;
+        case CALL+F:
+	   setreg(p,fltreg[FRV]);
+	   break;
+        case RET+I:
+        case RET+U:
+        case RET+P:
+	   rtarget(p,0,intreg[RV]);
+	   break;
+	case RET+F:
+	   rtarget(p,0,fltreg[FRV]);
+	   break;
+        default:
+	    break;
+    }
+}
+
+static void clobber(Node p) {
+    assert(p);
+    switch(specific(p->op)) {
+        case CALL+F:
+	case CALL+I:
+	case CALL+U:
+           {
+              int ireg_temps = (0xffff & ~(1<<RV));
+              int freg_temps = (0xffff & ~(1<<FRV));
+	   // Spill everything for now - revisit calling conventions later
+	    spill(ireg_temps,IREG,p);
+	    spill(freg_temps,FREG,p);
+            }
+	    break;
+	default:
+	    break;
+    }
+}
+
+
+int memop(Node p) {
+        assert(p);
+        assert(generic(p->op) == ASGN);
+        assert(p->kids[0]);
+        assert(p->kids[1]);
+        if (generic(p->kids[1]->kids[0]->op) == INDIR
+        && sametree(p->kids[0], p->kids[1]->kids[0]->kids[0]))
+                return 3;
+        else
+                return LBURG_MAX;
+}
+int sametree(Node p, Node q) {
+        return p == NULL && q == NULL
+        || p && q && p->op == q->op && p->syms[0] == q->syms[0]
+                && sametree(p->kids[0], q->kids[0])
+                && sametree(p->kids[1], q->kids[1]);
+}
+
+static void emit2(Node p) {
+    int op = specific(p->op); 
+
+    switch( op ) {
+       case ARG+F: 
+       case ARG+P: 
+       case ARG+I: 
+       case ARG+U: 
+           print("\tLDA\t(FP)\n\tADD\t%d\n\tSTA\t(TR)\n\tLDA\t(%s)\n\tSTA\t[TR]\n",p->syms[2]->u.c.v.i,p->kids[0]->syms[2]->x.name);
+           break;
+       case ARG+B:
+	   break;
+    }
+}
+
+static void doarg(Node p) {
+    static int argno;
+    if (argoffset==0) {
+	argoffset = 1;
+	argno = 0;
+    }
+    p->x.argno=argno++;
+    p->syms[2] = intconst(mkactual(1,p->syms[0]->u.c.v.i));
+}
+
+// Block operators not needed
+static void blkfetch(int k, int off, int reg, int tmp) {}
+static void blkstore(int k, int off, int reg, int tmp) {}
+static void blkloop(int dreg, int doff, int sreg, int soff,int size, int tmps[]) {}
+
+static void local(Symbol p) {
+    if (askregvar(p,(*IR->x.rmap)(ttob(p->type)))==0) {
+	mkauto(p);
+    }
+}
+
+static void function(Symbol f, Symbol caller[], Symbol callee[], int n) {
+    int i;
+
+    print("%s:\n",f->x.name);
+    usedmask[0] = usedmask[1] = 0;
+    freemask[0] = freemask[1] = ~(unsigned)0;
+
+    offset = 0;
+    for (i=0; callee[i]; i++) {
+	Symbol p = callee[i];
+	Symbol q = caller[i];
+	assert(q);
+	p->x.offset = q->x.offset = offset;
+	p->x.name = q->x.name = stringf("%d",p->x.offset);
+	p->sclass = q->sclass = AUTO;
+	offset += roundup(q->type->size,q->type->align);
+    }
+    assert(caller[i] == 0);
+    maxoffset = offset = 0;
+    maxargoffset = 0;
+
+    // Generate code
+    gencode(caller,callee);
+
+    // Now, set the frame size
+    framesize = maxoffset + maxargoffset;
+
+    // Gen entry code
+    if (framesize || isstruct(freturn(f->type))) {
+        print("\t\t\t; Build frame\n");
+        print("\tSTS\t(FP)\n");
+        if (isstruct(freturn(f->type))) {
+	    print("\tSTA\t(R1)\n");
+        }
+        print("\tLDA\t(FP)\n");
+        print("\tSUB\t%d\n",framesize);
+        print("\tSTA\t(FP)\t; Frame pointer to FP\n");
+        print("\tLDS\t(FP)\n");
+        print("\t\t\t; done building frame\n");
+    } else {
+	print("\tSTS\t(FP)\n");
+        print("\t\t\t; No frame needed - skip it (but still need FP)\n");
+    }
+
+    emitcode();
+
+    if (framesize || isstruct(freturn(f->type))) {
+        print("\t\t\t; strip frame\n");
+        print("\tLDA\t(FP)\n");
+        print("\tADD\t%d\n",framesize);
+        print("\tSTA\t(FP)\n");
+        print("\tLDS\t(FP)\n");
+        print("\t\t\t; done stripping frame\n");
+    }
+    print("\tRTN\n");
+}
+
+static void defsymbol(Symbol p) {
+    if (p->scope >= LOCAL && p->sclass == STATIC)
+	p->x.name = stringf("L%d", genlabel(1));
+    else if (p->generated)
+	p->x.name = stringf("L%s", p->name);
+    else if (p->scope == GLOBAL || p->sclass == EXTERN)
+	p->x.name = stringf("_%s",p->name);
+    else if (p->scope == CONSTANTS
+	    && (isint(p->type) || isptr(p->type))
+	    && p->name[0] == '0' && p->name[1] == 'x')
+	p->x.name = stringf("0%sH", &p->name[2]);
+    else
+	p->x.name = p->name;
+}
+
+static void address(Symbol q, Symbol p, long n) {
+        if (p->scope == GLOBAL
+        || p->sclass == STATIC || p->sclass == EXTERN)
+                q->x.name = stringf("%s%s%D",
+                        p->x.name, n >= 0 ? "+" : "", n);
+        else {
+                assert(n <= INT_MAX && n >= INT_MIN);
+                q->x.offset = p->x.offset + n;
+                q->x.name = stringd(q->x.offset);
+        }
+}
+
+static void defconst(int suffix, int size, Value v) {
+        print("\tDWM 0x%x\n",v.i & 0xffff);
+}
+static void defaddress(Symbol p) {
+        print("\tDWM\t%s\n", p->x.name);
+}
+
+static void defstring(int n, char *str) {
+        char *s=str;
+	int first = 1;
+	int quote = 0;
+	print("\tDFB\t");
+	while (s < str+n) {
+	    if ((*s >= ' ')&&(*s != '"')) {
+	       if (quote) {
+	          print("%c",*s++);
+	       } else {
+	           if (!first) {
+	               print(",");
+	           }
+
+		  first = 0;
+	          print("\"%c",*s++);
+		  quote = 1;
+	       }
+	     } else {
+	        if (quote) {
+	         print("\",%d",*s++);
+                 quote = 0;
+	        } else {
+	           if (!first) {
+		       first = 0;
+	               print(",");
+	           }
+	         print("%d",*s++);
+		 first = 0;
+	     }
+	       
+	    }
+	}
+	printf("\n");
+}
+
+static void export(Symbol p) {
+    /* D16M assembler is absolute - no imports/exports */
+}
+
+static void import(Symbol p) {
+    /* D16M assembler is absolute - no imports/exports */
+}
+
+static void global(Symbol p) {
+        assert(p->type->align == 1);
+        print("%s:\n", p->x.name);
+	if (p->u.seg == BSS) {
+            print("\tDFS\t%d\n", p->type->size);
+	}
+}
+
+static void space(int n) {
+    if (current_seg != BSS) {
+        print("\tDFS\t%d\n", n);
+    }
+}
+
+static int isfptr(Node n , int iftrue , int iffalse) {
+    if ( !n->syms[0]->generated && isfunc(n->syms[0]->type))
+       return iftrue;
+    else
+       return iffalse;
+}
+
+
+
+Interface d16mIR = {
+        1, 1, 0,  /* char */
+        1, 1, 0,  /* short */
+        1, 1, 0,  /* int */
+        1, 1, 0,  /* long */
+        1, 1, 0,  /* long long */
+        1, 1, 0,  /* float */
+        1, 1, 0,  /* double */
+        1, 1, 0,  /* long double */
+        1, 1, 0,  /* T * */
+        0, 1, 0,  /* struct */
+        0,        /* little_endian */
+        1,        /* mulops_calls */
+        1,        /* wants_callb */
+        1,        /* wants_argb */
+        1,        /* left_to_right */
+        0,        /* wants_dag */
+        0,        /* unsigned_char */
+	16,	  /* byte width */
+        address,
+        blockbeg,
+        blockend,
+        defaddress,
+        defconst,
+        defstring,
+        defsymbol,
+        emit,
+        export,
+        function,
+        gen,
+        global,
+        import,
+        local,
+        progbeg,
+        progend,
+        segment,
+        space,
+        0, 0, 0, 0, 0, 0, 0,
+        {1, rmap,
+            blkfetch, blkstore, blkloop,
+            _label,
+            _rule,
+            _nts,
+            _kids,
+            _string,
+            _templates,
+            _isinstruction,
+            _ntname,
+            emit2,
+            doarg,
+            target,
+            clobber,
+}
+};
+static char rcsid[] = "$Id: $";
+

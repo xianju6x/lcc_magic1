@@ -4,6 +4,7 @@
 
 static char rcsid[] = "$Id$";
 
+// "/usr/local/lib/lcc/gcc/cpp"
 #ifndef LCCDIR
 #define LCCDIR "/usr/local/lib/lcc/"
 #endif
